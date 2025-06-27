@@ -51,26 +51,38 @@ export function useCalls() {
   const createCall = async (phoneNumber: string, issueDescription: string) => {
     if (!user) return null
 
-    const { data, error } = await supabase
-      .from('calls')
-      .insert({
-        user_id: user.id,
-        phone_number: phoneNumber,
-        issue_description: issueDescription,
-        status: 'calling',
-        transcription: [],
-        started_at: new Date().toISOString(),
-        callback_requested: false,
+    try {
+      // Call the initiate-call edge function
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/initiate-call`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userPhone: user.phone || user.email, // Use phone if available, fallback to email
+          targetPhone: phoneNumber,
+          callReason: issueDescription,
+          userId: user.id,
+        }),
       })
-      .select()
-      .single()
 
-    if (error) {
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to initiate call')
+      }
+
+      const result = await response.json()
+      console.log('Call initiated:', result)
+
+      // Refresh calls to get the new call
+      await fetchCalls()
+
+      return result
+    } catch (error) {
       console.error('Error creating call:', error)
-      return null
+      throw error
     }
-
-    return data
   }
 
   const updateCallStatus = async (callId: string, status: Call['status']) => {
@@ -111,11 +123,47 @@ export function useCalls() {
     }
   }
 
+  const requestCallback = async (callId: string) => {
+    if (!user) return null
+
+    try {
+      const call = calls.find(c => c.id === callId)
+      if (!call) throw new Error('Call not found')
+
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/callback-user`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          callId: callId,
+          userPhone: user.phone || user.email,
+          originalCallSid: call.twilio_call_sid,
+        }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to request callback')
+      }
+
+      const result = await response.json()
+      console.log('Callback requested:', result)
+
+      return result
+    } catch (error) {
+      console.error('Error requesting callback:', error)
+      throw error
+    }
+  }
+
   return {
     calls,
     loading,
     createCall,
     updateCallStatus,
     addTranscription,
+    requestCallback,
   }
 }

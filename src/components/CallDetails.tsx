@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { X, Phone, MessageSquare, User, PhoneCall, Clock } from 'lucide-react'
+import { X, Phone, MessageSquare, User, PhoneCall, Clock, AlertCircle } from 'lucide-react'
 import { Call } from '../lib/supabase'
 import { useCalls } from '../hooks/useCalls'
 
@@ -10,7 +10,8 @@ interface CallDetailsProps {
 
 export function CallDetails({ call, onClose }: CallDetailsProps) {
   const [userTakeover, setUserTakeover] = useState(false)
-  const { updateCallStatus, addTranscription } = useCalls()
+  const [requestingCallback, setRequestingCallback] = useState(false)
+  const { updateCallStatus, addTranscription, requestCallback } = useCalls()
 
   const handleTakeOverCall = () => {
     setUserTakeover(true)
@@ -19,8 +20,17 @@ export function CallDetails({ call, onClose }: CallDetailsProps) {
   }
 
   const handleRequestCallback = async () => {
-    await updateCallStatus(call.id, 'callback_in_progress')
-    addTranscription(call.id, 'ai', 'Callback requested - will notify when human is available')
+    setRequestingCallback(true)
+    try {
+      await requestCallback(call.id)
+      await updateCallStatus(call.id, 'callback_in_progress')
+      addTranscription(call.id, 'ai', 'Callback requested - will notify when human is available')
+    } catch (error) {
+      console.error('Error requesting callback:', error)
+      // Show error to user
+    } finally {
+      setRequestingCallback(false)
+    }
   }
 
   const getStatusColor = (status: Call['status']) => {
@@ -53,6 +63,9 @@ export function CallDetails({ call, onClose }: CallDetailsProps) {
           <div>
             <h2 className="text-xl font-semibold text-gray-900">{call.phone_number}</h2>
             <p className="text-sm text-gray-600 mt-1">{call.issue_description}</p>
+            {call.twilio_call_sid && (
+              <p className="text-xs text-gray-500 mt-1">Call ID: {call.twilio_call_sid}</p>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -86,6 +99,11 @@ export function CallDetails({ call, onClose }: CallDetailsProps) {
                 <p className="text-sm text-gray-500">
                   Started {new Date(call.started_at).toLocaleString()}
                 </p>
+                {call.human_detected_at && (
+                  <p className="text-sm text-green-600">
+                    Human detected at {new Date(call.human_detected_at).toLocaleTimeString()}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -103,14 +121,27 @@ export function CallDetails({ call, onClose }: CallDetailsProps) {
               {(call.status === 'on_hold' || call.status === 'calling') && !call.callback_requested && (
                 <button
                   onClick={handleRequestCallback}
-                  className="bg-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-700 flex items-center"
+                  disabled={requestingCallback}
+                  className="bg-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-700 flex items-center disabled:opacity-50"
                 >
                   <PhoneCall className="w-4 h-4 mr-2" />
-                  Request Callback
+                  {requestingCallback ? 'Requesting...' : 'Request Callback'}
                 </button>
               )}
             </div>
           </div>
+
+          {/* AI Status Indicator */}
+          {call.status === 'calling' && (
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
+                <p className="text-sm text-blue-800">
+                  Swizz AI is actively handling this call and will notify you when a human is available
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Transcription */}
@@ -119,6 +150,11 @@ export function CallDetails({ call, onClose }: CallDetailsProps) {
             <h3 className="font-medium text-gray-900 flex items-center">
               <MessageSquare className="w-5 h-5 mr-2" />
               Live Transcription
+              {call.ai_responses_count && (
+                <span className="ml-2 text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
+                  {call.ai_responses_count} AI responses
+                </span>
+              )}
             </h3>
           </div>
           
@@ -127,6 +163,7 @@ export function CallDetails({ call, onClose }: CallDetailsProps) {
               <div className="text-center text-gray-500 py-8">
                 <MessageSquare className="w-8 h-8 mx-auto mb-2 text-gray-400" />
                 <p>Transcription will appear here once the call begins</p>
+                <p className="text-sm mt-1">Swizz AI will handle the conversation automatically</p>
               </div>
             ) : (
               call.transcription.map((entry, index) => (
@@ -142,7 +179,7 @@ export function CallDetails({ call, onClose }: CallDetailsProps) {
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs font-medium uppercase tracking-wide">
                         {entry.speaker === 'ai' ? 'Swizz AI' : 
-                         entry.speaker === 'human' ? 'Agent' : 'You'}
+                         entry.speaker === 'human' ? 'Representative' : 'You'}
                       </span>
                       <span className="text-xs opacity-75">
                         {formatTimestamp(entry.timestamp)}
@@ -155,6 +192,15 @@ export function CallDetails({ call, onClose }: CallDetailsProps) {
             )}
           </div>
         </div>
+
+        {/* Call Duration */}
+        {call.call_duration && (
+          <div className="p-4 border-t bg-gray-50">
+            <p className="text-sm text-gray-600 text-center">
+              Call duration: {Math.floor(call.call_duration / 60)}m {call.call_duration % 60}s
+            </p>
+          </div>
+        )}
       </div>
     </div>
   )

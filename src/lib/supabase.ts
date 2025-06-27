@@ -20,4 +20,8 @@ export type Call = {
   completed_at?: string
   callback_requested: boolean
   human_connected_at?: string
+  twilio_call_sid?: string
+  call_duration?: number
+  ai_responses_count?: number
+  human_detected_at?: string
 }
